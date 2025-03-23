@@ -1,4 +1,4 @@
-import dbConnect from "../../utils/dbConnect";
+import dbConnect from "../../utils/mongodb";
 import Gist from "../../models/Gist"; // Ensure you have this model
 
 export default async function handler(req, res) {
