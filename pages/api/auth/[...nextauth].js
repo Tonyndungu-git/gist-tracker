@@ -1,38 +1,60 @@
 import NextAuth from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import bcrypt from "bcrypt";
-import connectDB from "../../../lib/mongodb";
-import User from "../../../models/User"; // Ensure you have this User model
+import { MongoDBAdapter } from "@auth/mongodb-adapter";
+import clientPromise from "../../../lib/mongodb";
 
 export const authOptions = {
   providers: [
     CredentialsProvider({
-      name: "Credentials",
+      name: "GitHub Personal Access Token",
       credentials: {
-        email: { label: "Email", type: "text", placeholder: "your@email.com" },
-        password: { label: "Password", type: "password" },
+        accessToken: { label: "GitHub Personal Access Token", type: "password" },
       },
       async authorize(credentials) {
-        await connectDB(); // Connect to MongoDB
+        const { accessToken } = credentials;
 
-        const user = await User.findOne({ email: credentials.email });
-        if (!user) throw new Error("No user found with this email");
+        try {
+          const response = await fetch("https://api.github.com/user", {
+            headers: {
+              Authorization: `token ${accessToken}`,
+            },
+          });
 
-        const isValid = await bcrypt.compare(credentials.password, user.password);
-        if (!isValid) throw new Error("Incorrect password");
+          if (!response.ok) {
+            throw new Error("Invalid GitHub token");
+          }
 
-        return { id: user._id, name: user.name, email: user.email };
+          const user = await response.json();
+
+          return {
+            id: user.id.toString(),
+            name: user.name || user.login,
+            email: user.email || `${user.login}@users.noreply.github.com`,
+            image: user.avatar_url,
+          };
+        } catch (error) {
+          console.error("GitHub authentication failed:", error);
+          return null;
+        }
       },
     }),
   ],
-  pages: {
-    signIn: "/auth/signin", // Redirect to the sign-in page
-    signOut: "/auth/signout",
-    error: "/auth/error", // Error page
-  },
+  adapter: MongoDBAdapter(clientPromise),
   secret: process.env.NEXTAUTH_SECRET,
   session: {
     strategy: "jwt",
+  },
+  callbacks: {
+    async session({ session, token }) {
+      session.user.id = token.sub;
+      return session;
+    },
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+      }
+      return token;
+    },
   },
 };
 

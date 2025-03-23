@@ -1,23 +1,59 @@
-import connectDB from "../../../lib/mongodb";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../auth/[...nextauth]";
+import dbConnect from "../../../lib/mongodb";
 import Gist from "../../../models/Gist";
-import { getSession } from "next-auth/react";
 
 export default async function handler(req, res) {
-  await connectDB();
-  const session = await getSession({ req });
+  const session = await getServerSession(req, res, authOptions);
 
-  if (!session) return res.status(401).json({ error: "Unauthorized" });
+  if (!session) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  await dbConnect();
 
   if (req.method === "GET") {
-    const gists = await Gist.find({ userId: session.user.id });
-    return res.status(200).json(gists);
+    try {
+      const { search } = req.query;
+      const query = search
+        ? {
+            userId: session.user.id,
+            $or: [
+              { title: new RegExp(search, "i") },
+              { description: new RegExp(search, "i") },
+            ],
+          }
+        : { userId: session.user.id };
+
+      const gists = await Gist.find(query);
+      return res.status(200).json(gists);
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to fetch gists" });
+    }
   }
 
   if (req.method === "POST") {
-    const { title, description, code } = req.body;
-    const newGist = await Gist.create({ title, description, code, userId: session.user.id });
-    return res.status(201).json(newGist);
+    try {
+      const { title, description, code } = req.body;
+
+      if (!title || !code) {
+        return res.status(400).json({ error: "Title and code are required" });
+      }
+
+      const newGist = new Gist({
+        userId: session.user.id,
+        title,
+        description,
+        code,
+      });
+
+      await newGist.save();
+
+      return res.status(201).json(newGist);
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to create gist" });
+    }
   }
 
-  res.status(405).json({ error: "Method Not Allowed" });
+  return res.status(405).json({ error: "Method Not Allowed" });
 }
