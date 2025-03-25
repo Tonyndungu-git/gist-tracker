@@ -2,45 +2,42 @@ import NextAuth from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { MongoDBAdapter } from "@auth/mongodb-adapter";
 import clientPromise from "../../../lib/mongodb";
+import bcrypt from "bcryptjs";
 
 export const authOptions = {
+  adapter: MongoDBAdapter(clientPromise),
   providers: [
     CredentialsProvider({
-      name: "GitHub Personal Access Token",
+      name: "Credentials",
       credentials: {
-        accessToken: { label: "GitHub Personal Access Token", type: "password" },
+        email: { label: "Email", type: "text", placeholder: "example@example.com" },
+        password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        const { accessToken } = credentials;
-
+        const { email, password } = credentials;
         try {
-          const response = await fetch("https://api.github.com/user", {
-            headers: {
-              Authorization: `token ${accessToken}`,
-            },
-          });
-
-          if (!response.ok) {
-            throw new Error("Invalid GitHub token");
+          const client = await clientPromise;
+          if (!client) throw new Error("MongoDB client not found");
+          
+          const db = client.db("gist-tracker");
+          const user = await db.collection("users").findOne({ email });
+          if (!user) {
+            throw new Error("No user found");
           }
 
-          const user = await response.json();
+          const isValidPassword = await bcrypt.compare(password, user.password);
+          if (!isValidPassword) {
+            throw new Error("Invalid password");
+          }
 
-          return {
-            id: user.id.toString(),
-            name: user.name || user.login,
-            email: user.email || `${user.login}@users.noreply.github.com`,
-            image: user.avatar_url,
-          };
+          return { id: user._id.toString(), email: user.email, name: user.name };
         } catch (error) {
-          console.error("GitHub authentication failed:", error);
-          return null;
+          console.error("Authentication error:", error.message);
+          throw new Error("Authentication failed");
         }
       },
     }),
   ],
-  adapter: MongoDBAdapter(clientPromise),
-  secret: process.env.NEXTAUTH_SECRET,
   session: {
     strategy: "jwt",
   },
@@ -49,12 +46,10 @@ export const authOptions = {
       session.user.id = token.sub;
       return session;
     },
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-      }
-      return token;
-    },
+  },
+  secret: process.env.NEXTAUTH_SECRET,
+  pages: {
+    signIn: "/auth/signin",
   },
 };
 
